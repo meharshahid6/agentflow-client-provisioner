@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -15,7 +15,14 @@ body {
 
 body {
   margin: 0;
-  background: #020617;
-  color: #f8fafc;
+  background: #f6f8fc;
+  color: #0f172a;
   font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
