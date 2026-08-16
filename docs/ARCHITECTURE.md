@@ -1,38 +1,54 @@
 # Architecture
 
-## Current foundation
+## Application foundation
 
-The project is a single Next.js application using the App Router:
+The project is a Next.js App Router application configured for Cloudflare Workers through the official OpenNext adapter:
 
-- `app/` contains routes, layouts, page-level UI, and global styles.
-- `public/` is reserved for static assets.
-- `docs/` contains product and technical context.
-- `.env.example` documents future configuration without containing secrets.
+- `app/page.tsx` is the interactive client business form.
+- `app/api/clients/route.ts` is the server API boundary for create/list operations.
+- `app/clients/page.tsx` is the D1-backed saved clients page.
+- `lib/clients/validation.ts` contains server-side input normalization and validation.
+- `lib/clients/repository.ts` contains prepared D1 reads and writes.
+- `migrations/` contains SQL migrations applied by Wrangler.
+- `wrangler.jsonc` defines the Worker, asset, and `DB` D1 binding.
+- `open-next.config.ts` configures the Cloudflare adapter.
 
-The application is server-first by default. Client components should be introduced only for interactions that require browser state or event handlers.
+The application remains server-first where possible. The form is a Client Component because it owns controlled inputs, dynamic services, file selection, and submit feedback.
 
-## Planned boundaries
-
-As integrations are added, keep external service concerns behind small, typed modules rather than calling providers directly from page components. A likely future shape is:
+## Request and data flow
 
 ```text
-app/                 Routes and UI composition
-components/          Reusable presentation and interaction components
-lib/
-  integrations/      Provider-specific adapters
-  validation/        Input and workflow validation
-  provisioning/      Domain workflow orchestration
+Client form state
+  -> POST /api/clients
+  -> validateClientInput()
+  -> getCloudflareContext().env.DB
+  -> prepared INSERT into clients
+  -> created client + ID
 ```
 
-The exact structure can evolve with the first workflow. The important boundary is that provider-specific APIs remain replaceable and testable independently from the UI.
+The Clients page uses the same repository to read from D1. The GET API route is also available for programmatic reads.
 
-## Configuration and secrets
+## D1 data model
 
-Environment variables will be read only on the server unless a value is explicitly safe for the browser. Secret values must live in local or deployment environment configuration and must never be committed. `.env.example` should contain names and safe placeholders only.
+The `clients` table uses a text UUID primary key and ISO timestamps. Required business fields are constrained by application validation and SQLite `NOT NULL` columns. `services` is stored as JSON text so the current dynamic list remains simple without introducing a second table. Logo fields store metadata only (`name`, `type`, and `size`); file bytes are not persisted.
+
+## Local and production configuration
+
+Wrangler runs local D1 in `.wrangler/state`, separate from any remote database. The current `database_id` is an explicit all-zero placeholder so this milestone does not require a Cloudflare account or remote resource. Before deployment, replace it with a real D1 database ID and apply the migration remotely.
+
+`initOpenNextCloudflareForDev()` enables binding access during `next dev`. `npm run preview` uses OpenNext plus Wrangler to exercise the Worker-compatible `workerd` runtime.
+
+## Boundaries and security
+
+- All writes pass through server-side validation; client validation is only user feedback.
+- D1 writes use prepared statements and bound parameters.
+- No provider API credentials are used.
+- `.dev.vars`, `.env.local`, `.wrangler`, `.open-next`, and dependency folders are ignored.
+- No logo storage service is configured; R2 remains a future milestone.
 
 ## Quality expectations
 
 - TypeScript remains strict.
-- ESLint runs cleanly before changes are merged.
-- Production builds must pass.
-- Integration code should have explicit error handling, timeouts, and safe retry behavior when it is introduced.
+- ESLint runs cleanly.
+- `next build` and the OpenNext preview build must pass.
+- Integration code should keep explicit error handling and safe retry behavior as providers are introduced later.

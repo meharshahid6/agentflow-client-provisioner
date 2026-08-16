@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
 type ClientForm = {
@@ -22,8 +23,9 @@ type ServiceItem = {
   value: string;
 };
 
-type ErrorKey = "businessName" | "category" | "email" | "phone" | "country" | "services";
+type ErrorKey = "businessName" | "category" | "email" | "phone" | "country" | "services" | "facebook" | "instagram" | "logo" | "form";
 type FormErrors = Partial<Record<ErrorKey, string>>;
+type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 const initialForm: ClientForm = {
   businessName: "",
@@ -117,7 +119,9 @@ export default function Home() {
   const [nextServiceId, setNextServiceId] = useState(2);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saved">("idle");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [savedClientId, setSavedClientId] = useState<string | null>(null);
 
   function clearError(field: ErrorKey) {
     setErrors((current) => {
@@ -131,7 +135,9 @@ export default function Home() {
   function updateField(field: keyof ClientForm, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
     setSaveStatus("idle");
-    if (field === "businessName" || field === "category" || field === "email" || field === "phone" || field === "country") {
+    setSavedClientId(null);
+    setSaveMessage("");
+    if (field === "businessName" || field === "category" || field === "email" || field === "phone" || field === "country" || field === "facebook" || field === "instagram") {
       clearError(field);
     }
   }
@@ -139,6 +145,8 @@ export default function Home() {
   function updateService(id: number, value: string) {
     setServices((current) => current.map((service) => (service.id === id ? { ...service, value } : service)));
     setSaveStatus("idle");
+    setSavedClientId(null);
+    setSaveMessage("");
     clearError("services");
   }
 
@@ -146,6 +154,8 @@ export default function Home() {
     setServices((current) => [...current, { id: nextServiceId, value: "" }]);
     setNextServiceId((current) => current + 1);
     setSaveStatus("idle");
+    setSavedClientId(null);
+    setSaveMessage("");
   }
 
   function removeService(id: number) {
@@ -154,6 +164,8 @@ export default function Home() {
       return current.filter((service) => service.id !== id);
     });
     setSaveStatus("idle");
+    setSavedClientId(null);
+    setSaveMessage("");
   }
 
   function validateForm() {
@@ -161,7 +173,11 @@ export default function Home() {
 
     if (!form.businessName.trim()) nextErrors.businessName = "Business name is required.";
     if (!form.category) nextErrors.category = "Choose a business category.";
-    if (!form.email.trim()) nextErrors.email = "Business email is required.";
+    if (!form.email.trim()) {
+      nextErrors.email = "Business email is required.";
+    } else if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) {
+      nextErrors.email = "Enter a valid business email.";
+    }
     if (!form.phone.trim()) nextErrors.phone = "Business phone is required.";
     if (!form.country.trim()) nextErrors.country = "Country is required.";
     if (!services.some((service) => service.value.trim())) nextErrors.services = "Add at least one service.";
@@ -169,23 +185,56 @@ export default function Home() {
     return nextErrors;
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextErrors = validateForm();
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
       setSaveStatus("idle");
+      setSavedClientId(null);
       return;
     }
 
     setErrors({});
-    setSaveStatus("saved");
+    setSaveStatus("saving");
+    setSaveMessage("");
+    setSavedClientId(null);
+
+    try {
+      const response = await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          services: services.map((service) => service.value),
+          logo: logoFile ? { name: logoFile.name, type: logoFile.type, size: logoFile.size } : null,
+        }),
+      });
+      const result: { client?: { id: string }; error?: string; fields?: FormErrors } = await response.json();
+
+      if (!response.ok) {
+        setErrors(result.fields ?? { form: result.error ?? "Unable to save client." });
+        setSaveStatus("error");
+        setSaveMessage(result.error ?? "Unable to save client.");
+        return;
+      }
+
+      setSaveStatus("saved");
+      setSavedClientId(result.client?.id ?? null);
+      setSaveMessage("Client saved to D1.");
+    } catch {
+      setSaveStatus("error");
+      setSaveMessage("Unable to reach the client storage service.");
+    }
   }
 
   function handleLogoChange(event: ChangeEvent<HTMLInputElement>) {
     setLogoFile(event.target.files?.[0] ?? null);
     setSaveStatus("idle");
+    setSavedClientId(null);
+    setSaveMessage("");
+    clearError("logo");
   }
 
   return (
@@ -240,7 +289,8 @@ export default function Home() {
               <p className="mt-1 text-sm font-semibold text-slate-800">Create a new client</p>
             </div>
             <div className="flex items-center gap-3">
-              <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-500 sm:inline-flex">Draft · Local state</span>
+              <Link href="/clients" className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 sm:inline-flex">View saved clients</Link>
+              <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-500 md:inline-flex">D1 storage</span>
               <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">AC</div>
             </div>
           </header>
@@ -348,10 +398,12 @@ export default function Home() {
                   <div>
                     <label htmlFor="facebook" className="text-sm font-semibold text-slate-700">Facebook Page URL</label>
                     <input id="facebook" name="facebook" type="url" value={form.facebook} onChange={(event) => updateField("facebook", event.target.value)} className={inputClass()} placeholder="https://facebook.com/..." />
+                    <FieldError message={errors.facebook} />
                   </div>
                   <div>
                     <label htmlFor="instagram" className="text-sm font-semibold text-slate-700">Instagram URL</label>
                     <input id="instagram" name="instagram" type="url" value={form.instagram} onChange={(event) => updateField("instagram", event.target.value)} className={inputClass()} placeholder="https://instagram.com/..." />
+                    <FieldError message={errors.instagram} />
                   </div>
                 </div>
               </section>
@@ -396,6 +448,7 @@ export default function Home() {
                     <span className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">Choose file</span>
                   </label>
                   <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/svg+xml" onChange={handleLogoChange} className="sr-only" />
+                  <FieldError message={errors.logo} />
                   <p className="mt-3 text-xs text-slate-400">The file is held only in local browser state. Cloud storage will be added in a future phase.</p>
                 </div>
               </section>
@@ -403,12 +456,19 @@ export default function Home() {
               <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/50 sm:flex-row sm:items-center sm:justify-between sm:p-6">
                 <div aria-live="polite">
                   {saveStatus === "saved" ? (
-                    <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100"><CheckIcon /></span>Client saved locally in this session.</p>
+                    <div>
+                      <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100"><CheckIcon /></span>{saveMessage}</p>
+                      {savedClientId ? <p className="mt-1 pl-8 text-xs text-slate-500">Client ID: <span className="font-mono text-slate-700">{savedClientId}</span></p> : null}
+                    </div>
+                  ) : saveStatus === "error" ? (
+                    <p className="text-sm font-semibold text-rose-600">{saveMessage || errors.form || "Unable to save client."}</p>
+                  ) : saveStatus === "saving" ? (
+                    <p className="text-sm font-semibold text-indigo-600">Saving client to D1…</p>
                   ) : (
                     <p className="text-xs text-slate-400">All required fields must be completed before saving.</p>
                   )}
                 </div>
-                <button type="submit" className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-500/20 focus:outline-none">Save Client</button>
+                <button type="submit" disabled={saveStatus === "saving"} className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-500/20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60">{saveStatus === "saving" ? "Saving…" : "Save Client"}</button>
               </div>
             </form>
           </main>

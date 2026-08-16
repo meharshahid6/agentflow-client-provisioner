@@ -4,7 +4,7 @@
 
 Agentflow Client Provisioner will become a focused workspace for setting up and managing client environments through repeatable provisioning workflows.
 
-The initial release establishes the application foundation only. It does not connect to external services, create client resources, or store credentials.
+The current milestone establishes the application foundation and persistent client records in a local-first Cloudflare D1 database. It does not provision external client resources or store credentials.
 
 ## Problem
 
@@ -25,15 +25,15 @@ Client setup can become inconsistent when each environment is configured manuall
 
 ## Current scope
 
-This foundation includes the Next.js application shell, TypeScript, App Router, Tailwind CSS, ESLint, environment-variable documentation, and project documentation.
+This milestone includes the Next.js application shell, TypeScript, App Router, Tailwind CSS, ESLint, the Client Business Details Form, server-side validation, local D1 persistence, and a saved Clients page.
 
 The following are intentionally out of scope for now:
 
 - OpenAI integration
 - Hostinger integration
-- Cloudflare integration
+- Cloudflare provider APIs beyond the configured D1 database
 - Meta integration
 - Any other API integration
 - Authentication and authorization
-- Persistent data storage
+- Remote production database provisioning
 - Real API keys or secrets
