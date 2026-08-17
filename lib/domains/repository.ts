@@ -6,6 +6,7 @@ export type DomainRecord = {
   availabilityStatus: string;
   availabilityDetails: string | null;
   purchaseStatus: string;
+  ownershipStatus: "available_not_owned" | "existing_owned_domain" | "purchase_pending" | "purchased";
   purchasedAt: string | null;
   cloudflareZoneId: string | null;
   cloudflareZoneStatus: string;
@@ -17,16 +18,17 @@ export type DomainRecord = {
   metaVerificationValue: string | null;
   metaDnsRecordId: string | null;
   metaVerificationStatus: string;
+  metaPublicDnsStatus: "not_configured" | "dns_pending" | "dns_detected" | "failed";
   createdAt: string;
   updatedAt: string;
 };
 
 type DomainRow = {
   id: string; client_id: string; domain: string; registrar: string; availability_status: string;
-  availability_details: string | null; purchase_status: string; purchased_at: string | null;
+  availability_details: string | null; purchase_status: string; ownership_status: DomainRecord["ownershipStatus"]; purchased_at: string | null;
   cloudflare_zone_id: string | null; cloudflare_zone_status: string; assigned_nameservers: string | null;
   nameserver_status: string; custom_domain_id: string | null; custom_domain_status: string; ssl_status: string;
-  meta_verification_value: string | null; meta_dns_record_id: string | null; meta_verification_status: string;
+  meta_verification_value: string | null; meta_dns_record_id: string | null; meta_verification_status: string; meta_public_dns_status: DomainRecord["metaPublicDnsStatus"];
   created_at: string; updated_at: string;
 };
 
@@ -36,11 +38,11 @@ function toDomain(row: DomainRow): DomainRecord {
   return {
     id: row.id, clientId: row.client_id, domain: row.domain, registrar: row.registrar,
     availabilityStatus: row.availability_status, availabilityDetails: row.availability_details,
-    purchaseStatus: row.purchase_status, purchasedAt: row.purchased_at, cloudflareZoneId: row.cloudflare_zone_id,
+    purchaseStatus: row.purchase_status, ownershipStatus: row.ownership_status, purchasedAt: row.purchased_at, cloudflareZoneId: row.cloudflare_zone_id,
     cloudflareZoneStatus: row.cloudflare_zone_status, assignedNameservers, nameserverStatus: row.nameserver_status,
     customDomainId: row.custom_domain_id, customDomainStatus: row.custom_domain_status, sslStatus: row.ssl_status,
     metaVerificationValue: row.meta_verification_value, metaDnsRecordId: row.meta_dns_record_id,
-    metaVerificationStatus: row.meta_verification_status, createdAt: row.created_at, updatedAt: row.updated_at,
+    metaVerificationStatus: row.meta_verification_status, metaPublicDnsStatus: row.meta_public_dns_status, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
 
@@ -76,7 +78,7 @@ export async function listDomains(db: D1Database) {
 }
 
 export async function updateDomainFields(db: D1Database, id: string, fields: Record<string, string | null>) {
-  const allowed = new Set(["availability_status", "availability_details", "availability_checked_at", "purchase_status", "purchase_confirmation_token", "purchased_at", "cloudflare_zone_id", "cloudflare_zone_status", "assigned_nameservers", "nameserver_status", "custom_domain_id", "custom_domain_status", "ssl_status", "https_checked_at", "meta_verification_value", "meta_dns_record_id", "meta_verification_status"]);
+  const allowed = new Set(["availability_status", "availability_details", "availability_checked_at", "purchase_status", "ownership_status", "purchase_confirmation_token", "purchased_at", "cloudflare_zone_id", "cloudflare_zone_status", "assigned_nameservers", "nameserver_status", "custom_domain_id", "custom_domain_status", "ssl_status", "https_checked_at", "meta_verification_value", "meta_dns_record_id", "meta_verification_status", "meta_public_dns_status", "meta_public_dns_checked_at"]);
   const entries = Object.entries(fields).filter(([key]) => allowed.has(key));
   if (!entries.length) return false;
   const assignments = entries.map(([key]) => `${key} = ?`).join(", ");

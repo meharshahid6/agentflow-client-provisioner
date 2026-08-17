@@ -8,6 +8,8 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Optional uploaded-logo storage. Uncomment after creating the production R2 bucket.
+  // "r2_buckets": [{ "binding": "LOGO_ASSETS", "bucket_name": "REPLACE_WITH_PRODUCTION_BUCKET_NAME" }],
   "d1_databases": [
     {
       "binding": "DB",

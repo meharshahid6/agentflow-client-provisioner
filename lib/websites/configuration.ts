@@ -165,16 +165,18 @@ export function selectTemplateForCategory(category: string): WebsiteTemplate {
 
 export function createDeterministicContent(client: ClientRecord): WebsiteContent {
   const businessName = client.businessName || "Business";
-  const category = client.category || "business";
+  const category = (client.category || "business").trim();
+  const categoryLabel = /services?$/i.test(category) ? category : `${category} services`;
   const location = [client.city, client.country].filter(Boolean).join(", ");
+  const serviceSummary = client.services.length ? client.services.slice(0, 3).join(", ") : categoryLabel.toLowerCase();
   return {
-    heroHeadline: `${businessName}: ${category} services you can discuss directly`,
-    heroSubheadline: client.description || `${businessName} provides the listed services${location ? ` in ${location}` : ""}. Contact the business to confirm scope and availability.`,
-    about: client.description || `${businessName} is a ${category.toLowerCase()} business${location ? ` based in ${location}` : ""}. The details on this website come from the business information on record.`,
-    serviceDescriptions: client.services.map((service) => `Contact ${businessName} to discuss ${service.toLowerCase()}, availability, and service scope.`),
-    primaryCta: "Call the business",
-    secondaryCta: "Send an email",
-    seoDescription: (client.description || `${businessName} provides ${client.services.join(", ")}${location ? ` in ${location}` : ""}.`).slice(0, 160),
+    heroHeadline: `${categoryLabel.charAt(0).toUpperCase()}${categoryLabel.slice(1).toLowerCase()} from ${businessName}`,
+    heroSubheadline: client.description || `Explore the services offered by ${businessName}${location ? ` in ${location}` : ""}, then contact the team to discuss your needs.`,
+    about: client.description || `${businessName} offers ${categoryLabel.toLowerCase()}${location ? ` in ${location}` : ""}. Contact the business directly for current service details and availability.`,
+    serviceDescriptions: client.services.map((service) => `${businessName} offers ${service.toLowerCase()}. Contact the business to discuss scope and availability.`),
+    primaryCta: "Call now",
+    secondaryCta: "Email us",
+    seoDescription: (client.description || `${businessName} offers ${serviceSummary}${location ? ` in ${location}` : ""}. Contact the business for service details and availability.`).slice(0, 160),
     faqs: [],
   };
 }
@@ -213,7 +215,7 @@ export function createWebsiteConfiguration(
     contentSource: options.contentSource ?? "deterministic",
     content,
     seo: {
-      title: options.seoTitle ?? `${businessName} | ${client.category || "Business"}`,
+      title: options.seoTitle ?? `${businessName} | ${client.category || "Business Services"}`,
       description: content.seoDescription,
     },
     identity: {

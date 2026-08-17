@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { validateMetaVerification, isValidHostname, normalizeHostname } from "../lib/domains/validation";
+import { hasExpectedTxtAnswer, normalizeTxtAnswer } from "../lib/domains/public-dns";
+import { getNextSetupOperation } from "../lib/domains/setup-sequence";
 import { CloudflareClient } from "../lib/integrations/cloudflare";
 import { HostingerClient } from "../lib/integrations/hostinger";
 import { ProviderRequestError } from "../lib/integrations/http";
 import { getProviderStatuses, getRuntimeProviderStatuses } from "../lib/integrations/provider-status";
+import { createDeterministicContent, selectTemplateForCategory } from "../lib/websites/configuration";
+import { resolvePublicPath } from "../lib/domains/public-path";
+import type { ClientRecord } from "../lib/clients/repository";
+import type { DomainRecord } from "../lib/domains/repository";
 
 test("domain and Meta values are validated", () => {
   assert.equal(normalizeHostname("https://WWW.Example.com/path"), "example.com");
@@ -59,7 +65,7 @@ test("Hostinger handles wrapped pricing, portfolio lookup, WHOIS, and nameserver
   await client.listWhoisProfiles();
   await client.updateNameservers("example.com", ["a.ns.cloudflare.com", "b.ns.cloudflare.com"]);
   assert.equal(calls.at(-1)?.init?.method, "PUT");
-  await assert.rejects(() => client.updateNameservers("example.com", ["only-one.example"]), /At least two/);
+  assert.throws(() => client.updateNameservers("example.com", ["only-one.example"]), /At least two/);
 });
 
 test("provider errors are parsed without request secrets", async () => {
@@ -92,4 +98,37 @@ test("Cloudflare finds zones and upserts existing DNS records non-destructively"
   await client.upsertDnsRecord("zone-1", { type: "TXT", name: "example.com", content: "facebook-domain-verification=value" });
   assert.equal(calls.at(-1)?.url.endsWith("/dns_records/record-1"), true);
   assert.equal(calls.at(-1)?.init?.method, "PUT");
+});
+
+test("deterministic copy is grammatical and category-aware", () => {
+  const client = { id: "client-1", businessName: "Five Star Study", category: "Professional Services", description: "", city: "Lahore", country: "Pakistan", services: ["Education Consulting"], websiteStatus: "not_generated" } as ClientRecord;
+  const content = createDeterministicContent(client);
+  assert.equal(content.heroHeadline, "Professional services from Five Star Study");
+  assert.equal(content.heroHeadline.includes("Services services"), false);
+  assert.match(content.about, /Five Star Study offers professional services in Lahore, Pakistan/);
+  assert.equal(selectTemplateForCategory("consulting"), "professional_corporate");
+  assert.equal(selectTemplateForCategory("education"), "local_service");
+});
+
+test("public policy paths resolve and unknown paths do not", () => {
+  assert.equal(resolvePublicPath(undefined), "");
+  assert.equal(resolvePublicPath(["privacy"]), "privacy");
+  assert.equal(resolvePublicPath(["terms"]), "terms");
+  assert.equal(resolvePublicPath(["unknown"]), null);
+});
+
+test("public DNS TXT answers require an exact normalized value", () => {
+  const expected = "facebook-domain-verification=abc123";
+  assert.equal(normalizeTxtAnswer('"facebook-domain-" "verification=abc123"'), expected);
+  assert.equal(hasExpectedTxtAnswer({ Answer: [{ type: 16, data: `"${expected}"` }] }, expected), true);
+  assert.equal(hasExpectedTxtAnswer({ Answer: [{ type: 16, data: '"facebook-domain-verification=other"' }] }, expected), false);
+});
+
+test("setup sequence pauses for ownership and zone activation", () => {
+  const base = { ownershipStatus: "available_not_owned", cloudflareZoneId: null, nameserverStatus: "not_started", cloudflareZoneStatus: "not_started", customDomainStatus: "not_started", sslStatus: "not_started" } as DomainRecord;
+  assert.equal(getNextSetupOperation(null), "check_domain");
+  assert.equal(getNextSetupOperation(base), "ownership_required");
+  assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "existing_owned_domain" }), "create_zone");
+  assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "pending" }), "check_zone");
+  assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active" }), "attach_worker");
 });

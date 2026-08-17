@@ -2,6 +2,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getClientById } from "@/lib/clients/repository";
 import { getDomainByClientId, updateDomainFields, upsertDomain } from "@/lib/domains/repository";
 import { isValidHostname, normalizeHostname, validateMetaVerification } from "@/lib/domains/validation";
+import { checkPublicTxt } from "@/lib/domains/public-dns";
 import { CloudflareClient } from "@/lib/integrations/cloudflare";
 import { HostingerClient } from "@/lib/integrations/hostinger";
 import { ProviderRequestError } from "@/lib/integrations/http";
@@ -24,8 +25,8 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
     if (operation === "check_domain") {
       const hostname = normalizeHostname(body?.domain ?? client.domain); if (!isValidHostname(hostname)) return Response.json({ error: "A valid preferred domain is required." }, { status: 422 });
       if (!hostinger.isConfigured()) throw new Error("Hostinger is not configured.");
-      const results = await hostinger.checkAvailability(hostname); const found = results.find((item) => item.domain === hostname) ?? results[0];
-      const domain = await upsertDomain(env.DB, id, hostname); await updateDomainFields(env.DB, domain!.id, { availability_status: found?.available ? "available" : "unavailable", availability_details: JSON.stringify(found ? { domain: found.domain, available: found.available, price: found.price, currency: found.currency } : {}), availability_checked_at: new Date().toISOString() });
+      const [results, portfolioDomain] = await Promise.all([hostinger.checkAvailability(hostname), hostinger.findPortfolioDomain(hostname)]); const found = results.find((item) => item.domain === hostname) ?? results[0];
+      const domain = await upsertDomain(env.DB, id, hostname); await updateDomainFields(env.DB, domain!.id, { availability_status: found?.available ? "available" : "unavailable", availability_details: JSON.stringify(found ? { domain: found.domain, available: found.available, price: found.price, currency: found.currency } : {}), availability_checked_at: new Date().toISOString(), ownership_status: portfolioDomain ? "existing_owned_domain" : "available_not_owned" });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Availability checked for ${hostname}.` });
       return Response.json({ message: found?.available ? `Available${found.price !== null ? `: ${found.price} ${found.currency ?? ""}` : ""}` : "Domain is unavailable.", availability: found ? { available: found.available, price: found.price, currency: found.currency } : null });
     }
@@ -39,13 +40,14 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
     if (operation === "portfolio_lookup") {
       if (!hostinger.isConfigured()) throw new Error("Hostinger is not configured.");
       const portfolioDomain = await hostinger.findPortfolioDomain(domain.domain);
+      if (portfolioDomain) await updateDomainFields(env.DB, domain.id, { ownership_status: "existing_owned_domain" });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Portfolio lookup completed for ${domain.domain}.` });
       return Response.json({ message: portfolioDomain ? "Domain found in Hostinger portfolio." : "Domain is not present in the Hostinger portfolio.", found: Boolean(portfolioDomain), domain: portfolioDomain });
     }
     if (operation === "confirm_purchase") {
       if (body?.confirmation !== domain.domain) return Response.json({ error: "Type the exact domain name for the first purchase confirmation." }, { status: 422 });
       if (domain.availabilityStatus !== "available") return Response.json({ error: "Only an available domain can proceed to purchase confirmation." }, { status: 409 });
-      const token = crypto.randomUUID(); await updateDomainFields(env.DB, domain.id, { purchase_confirmation_token: token, purchase_status: "pending" });
+      const token = crypto.randomUUID(); await updateDomainFields(env.DB, domain.id, { purchase_confirmation_token: token, purchase_status: "pending", ownership_status: "purchase_pending" });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "pending", safeMessage: "First paid domain purchase confirmation accepted; no purchase made." });
       return Response.json({ message: "First confirmation accepted. Review cost and submit the second explicit confirmation.", confirmationToken: token });
     }
@@ -55,11 +57,12 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
       if (!body.itemId || !body.paymentMethodId || !Number.isInteger(body.whoisId)) return Response.json({ error: "itemId, paymentMethodId, and whoisId are required." }, { status: 422 });
       if (!hostinger.isConfigured()) throw new Error("Hostinger is not configured.");
       await hostinger.registerDomain({ domain: domain.domain, itemId: body.itemId, paymentMethodId: body.paymentMethodId, whoisId: body.whoisId! });
-      await updateDomainFields(env.DB, domain.id, { purchase_status: "purchased", purchase_confirmation_token: null, purchased_at: new Date().toISOString() });
+      await updateDomainFields(env.DB, domain.id, { purchase_status: "purchased", ownership_status: "purchased", purchase_confirmation_token: null, purchased_at: new Date().toISOString() });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Domain registration submitted for ${domain.domain}.` });
       return Response.json({ message: "Domain registration request submitted." });
     }
     if (operation === "create_zone") {
+    if (!(["existing_owned_domain", "purchased"] as string[]).includes(domain.ownershipStatus)) throw new Error("Domain ownership must be confirmed before creating a Cloudflare zone.");
       if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured.");
       const existing = object(await cloudflare.findZone(domain.domain)); const zone = existing.id ? existing : object(await cloudflare.createZone(domain.domain));
       if (typeof zone.id !== "string") throw new Error("Cloudflare did not return a zone ID.");
@@ -72,7 +75,15 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
       await hostinger.updateNameservers(domain.domain, domain.assignedNameservers); await updateDomainFields(env.DB, domain.id, { nameserver_status: "configured" });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Nameserver update submitted for ${domain.domain}.` }); return Response.json({ message: "Nameserver update submitted." });
     }
+    if (operation === "check_zone") {
+      if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured."); if (!domain.cloudflareZoneId) return Response.json({ error: "Create the Cloudflare zone first." }, { status: 409 });
+      const zone = object(await cloudflare.getZone(domain.cloudflareZoneId)); const status = zone.status === "active" ? "active" : "pending";
+      await updateDomainFields(env.DB, domain.id, { cloudflare_zone_status: status });
+      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: status === "active" ? "success" : "pending", safeMessage: `Cloudflare zone is ${status}.` });
+      return Response.json({ message: status === "active" ? "Cloudflare zone is active." : "Cloudflare zone is still pending activation.", status });
+    }
     if (operation === "attach_worker") {
+      if (domain.cloudflareZoneStatus !== "active") return Response.json({ error: "Cloudflare zone must be active before attaching the Worker custom domain." }, { status: 409 });
       if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured."); const attached = object(await cloudflare.attachWorkerDomain(domain.domain));
       await updateDomainFields(env.DB, domain.id, { custom_domain_id: typeof attached.id === "string" ? attached.id : null, custom_domain_status: typeof attached.status === "string" ? attached.status : "pending" });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Shared Worker custom domain submitted for ${domain.domain}.` }); return Response.json({ message: "Worker custom domain attachment submitted." });
@@ -86,13 +97,13 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
       const validation = validateMetaVerification(body?.value ?? ""); if (!validation.valid) return Response.json({ error: validation.error }, { status: 422 });
       if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured."); if (!domain.cloudflareZoneId) return Response.json({ error: "Create the Cloudflare zone first." }, { status: 409 });
       const record = object(await cloudflare.upsertDnsRecord(domain.cloudflareZoneId, { type: "TXT", name: domain.domain, content: validation.value }));
-      await updateDomainFields(env.DB, domain.id, { meta_verification_value: validation.value, meta_dns_record_id: typeof record.id === "string" ? record.id : null, meta_verification_status: "record_created" });
+      await updateDomainFields(env.DB, domain.id, { meta_verification_value: validation.value, meta_dns_record_id: typeof record.id === "string" ? record.id : null, meta_verification_status: "record_created", meta_public_dns_status: "dns_pending", meta_public_dns_checked_at: null });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Meta TXT record created for ${domain.domain}; Meta verification not claimed.` }); return Response.json({ message: "TXT record created. DNS is pending; Meta approval is not yet confirmed." });
     }
     if (operation === "check_meta_txt") {
-      if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured."); if (!domain.cloudflareZoneId || !domain.metaVerificationValue) return Response.json({ error: "Meta TXT is not configured." }, { status: 409 });
-      const records = await cloudflare.listDnsRecords(domain.cloudflareZoneId, "TXT", domain.domain); const detected = Array.isArray(records) && records.some((item) => object(item).content === domain.metaVerificationValue);
-      await updateDomainFields(env.DB, domain.id, { meta_verification_status: detected ? "dns_detected" : "record_created" }); await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: detected ? "success" : "pending", safeMessage: detected ? "Meta TXT detected in Cloudflare DNS; Meta approval not claimed." : "Meta TXT remains pending in DNS." }); return Response.json({ message: detected ? "DNS detected. Ready to verify in Meta." : "DNS is still pending.", detected });
+      provider = "system"; if (!domain.metaVerificationValue) return Response.json({ error: "Meta TXT is not configured." }, { status: 409 });
+      const detected = await checkPublicTxt(domain.domain, domain.metaVerificationValue);
+      await updateDomainFields(env.DB, domain.id, { meta_public_dns_status: detected ? "dns_detected" : "dns_pending", meta_public_dns_checked_at: new Date().toISOString() }); await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: detected ? "success" : "pending", safeMessage: detected ? "Public Meta TXT detected; Meta approval not claimed." : "Public Meta TXT remains pending." }); return Response.json({ message: detected ? "DNS detected. Ready to verify in Meta." : "DNS is still pending.", detected });
     }
     return Response.json({ error: "Unsupported setup operation." }, { status: 422 });
   } catch (error) {
