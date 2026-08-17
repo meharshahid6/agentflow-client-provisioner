@@ -9,7 +9,8 @@ Agentflow Client Provisioner is an internal Next.js 16 application for managing 
 - Optionally request content through the existing generic AI provider boundary. AgentRouter support is implemented, but live use is currently externally blocked by provider authentication; deterministic generation remains fully usable.
 - Switch among `modern_business`, `professional_corporate`, and `local_service` without replacing saved content.
 - Preview websites, readiness, logos, policies, FAQs, social links, SEO, and Open Graph data.
-- Route live hostnames through one shared Worker to `/`, `/privacy`, and `/terms`; additional paths return 404.
+- Route published live hostnames through one shared Worker to `/`, `/privacy`, and `/terms`; draft and unreviewed websites remain private previews and additional paths return 404.
+- Treat the apex domain as canonical; `www` is normalized to the same client hostname when that hostname is attached to the Worker.
 - Track domain availability, ownership, purchase, Cloudflare, HTTPS, and Meta TXT state.
 - View aggregate state in `/dashboard`, all clients in `/clients`, domains in `/domains`, and provider configuration in `/settings`.
 
@@ -43,7 +44,7 @@ The `DB` binding points to Cloudflare D1. Ordered SQL migrations in `migrations/
 - `domains`: availability, ownership/purchase, zone, nameserver, Worker domain, HTTPS, and Meta DNS state.
 - `integration_runs`: safe provider/system operation status without credentials or secret payloads.
 
-Apply local migrations with `npm run d1:migrate:local`. Before production deployment, create a remote D1 database, replace the placeholder production database ID in `wrangler.jsonc`, and apply the same migrations remotely.
+Apply local migrations with `npm run d1:migrate:local`. The checked-in Wrangler configuration points to the production D1 database; apply any pending migrations remotely before deployment.
 
 ## Domain setup sequence
 
@@ -53,10 +54,10 @@ The setup panel enforces this order:
 Business details -> Website generated -> Domain availability
 -> Domain ownership or explicit paid purchase
 -> Cloudflare zone -> Hostinger nameservers -> Cloudflare zone active
--> Worker custom domain -> HTTPS ready -> Meta TXT -> Complete
+-> Apex and www Worker custom domains -> HTTPS ready -> Meta TXT -> Complete
 ```
 
-Paid registration is never part of automatic Continue Setup. It requires the exact domain confirmation, provider purchase inputs, and a second explicit approval. A domain already found in the Hostinger portfolio follows the owned-domain path. Automated tests mock all provider writes and never buy a domain or create production resources.
+Paid registration is never part of automatic Continue Setup. It requires the exact domain confirmation, provider purchase inputs, and a second explicit approval. Immediately before registration, the app reconciles the Hostinger portfolio so a lost response cannot cause a second registration attempt. A domain already found in the Hostinger portfolio follows the owned-domain path. Automated tests mock all provider writes and never buy a domain or create production resources.
 
 Meta status distinguishes a TXT record saved in Cloudflare from the exact value being publicly resolvable. `dns_detected` means "DNS detected. Ready to verify in Meta" and never claims Meta approval.
 
@@ -72,7 +73,7 @@ Copy placeholder names from `.env.example` into ignored `.dev.vars` for local pr
 | `CLOUDFLARE_WORKER_NAME` | Shared deployed Worker service name |
 | `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` | Optional generic AI content provider |
 
-Production also requires a deployed Worker, custom domains, a real remote D1 ID, and an R2 bucket bound as `LOGO_ASSETS`. `ASSETS` remains reserved for OpenNext static assets. The repository intentionally contains only an R2 placeholder in the production environment; local logo handling safely retains metadata when `LOGO_ASSETS` is absent.
+Production requires a deployed shared Worker, apex and www custom domains, and the real remote D1 ID. R2/logo storage is optional and deferred; `ASSETS` remains reserved for OpenNext static assets, and local logo handling safely retains metadata when `LOGO_ASSETS` is absent.
 
 ## Quality gates
 
@@ -90,5 +91,7 @@ Useful scripts also include `npm run cf-typegen`, `npm run deploy`, and `npm run
 ## Security
 
 Provider calls use server-side credentials only. D1 queries are prepared and bound. Integration history stores constrained operation names and truncated safe messages, not authorization headers, API tokens, payment credentials, or secret provider payloads. `.env*` (except `.env.example`), `.dev.vars*`, `.next/`, `.wrangler/`, `.open-next/`, and `node_modules/` are ignored.
+
+The production admin hostname must be protected with Cloudflare Access. Apply an owner-only Access policy to the Workers.dev application for `/`, `/dashboard*`, `/clients*`, `/domains*`, `/settings*`, and `/api*`. Do not apply that policy to client custom hostnames; `/sites/*` is an internal rewrite target and client `/`, `/privacy`, and `/terms` must remain public. Access configuration is an external Cloudflare dashboard/API action and is not represented by a trusted-header shortcut in application code.
 
 See [Architecture](docs/ARCHITECTURE.md), [Project brief](docs/PROJECT_BRIEF.md), and [Roadmap](docs/ROADMAP.md).

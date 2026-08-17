@@ -4,6 +4,7 @@ import test from "node:test";
 import { validateMetaVerification, isValidHostname, normalizeHostname } from "../lib/domains/validation";
 import { hasExpectedTxtAnswer, normalizeTxtAnswer } from "../lib/domains/public-dns";
 import { getNextSetupOperation } from "../lib/domains/setup-sequence";
+import { registerDomainWithReconciliation } from "../lib/domains/purchase";
 import { CloudflareClient } from "../lib/integrations/cloudflare";
 import { HostingerClient } from "../lib/integrations/hostinger";
 import { ProviderRequestError } from "../lib/integrations/http";
@@ -68,6 +69,17 @@ test("Hostinger handles wrapped pricing, portfolio lookup, WHOIS, and nameserver
   assert.throws(() => client.updateNameservers("example.com", ["only-one.example"]), /At least two/);
 });
 
+test("paid registration reconciles portfolio ownership before any write", async () => {
+  const methods: string[] = [];
+  const client = new HostingerClient({ token: "test-token", fetch: async (_url, init) => {
+    methods.push(init?.method ?? "GET");
+    return Response.json({ items: [{ domain: "example.com", status: "active" }] });
+  } });
+  const result = await registerDomainWithReconciliation(client, { domain: "example.com", itemId: "item", paymentMethodId: "payment", whoisId: 1 });
+  assert.equal(result.reconciled, true);
+  assert.deepEqual(methods, ["GET"]);
+});
+
 test("provider errors are parsed without request secrets", async () => {
   const client = new HostingerClient({ token: "test-token", fetch: async () => Response.json({ error: "Domain unavailable", correlation_id: "safe-id" }, { status: 422 }) });
   await assert.rejects(() => client.listPortfolio(), (error) => error instanceof ProviderRequestError && error.details.status === 422 && error.message === "Domain unavailable" && !error.message.includes("test-token"));
@@ -125,10 +137,12 @@ test("public DNS TXT answers require an exact normalized value", () => {
 });
 
 test("setup sequence pauses for ownership and zone activation", () => {
-  const base = { ownershipStatus: "available_not_owned", cloudflareZoneId: null, nameserverStatus: "not_started", cloudflareZoneStatus: "not_started", customDomainStatus: "not_started", sslStatus: "not_started" } as DomainRecord;
+  const base = { ownershipStatus: "available_not_owned", cloudflareZoneId: null, nameserverStatus: "not_started", cloudflareZoneStatus: "not_started", customDomainStatus: "not_started", wwwCustomDomainStatus: "not_started", sslStatus: "not_started" } as DomainRecord;
   assert.equal(getNextSetupOperation(null), "check_domain");
   assert.equal(getNextSetupOperation(base), "ownership_required");
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "existing_owned_domain" }), "create_zone");
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "pending" }), "check_zone");
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active" }), "attach_worker");
+  assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active", customDomainId: "worker-domain", wwwCustomDomainId: "www-worker-domain", customDomainStatus: "pending" }), "check_worker");
+  assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active", customDomainId: "worker-domain", wwwCustomDomainId: "www-worker-domain", customDomainStatus: "active", wwwCustomDomainStatus: "active" }), "check_https");
 });

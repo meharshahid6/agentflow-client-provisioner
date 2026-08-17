@@ -20,11 +20,5 @@
 			"preview_database_id": "agentflow-client-provisioner-local",
 			"migrations_dir": "migrations"
 		},
-		{
-			"binding": "yes",
-			"database_name": "agentflow-client-provisioner-db",
-			"database_id": "8ce18ea3-cb47-4cb7-a5ac-5e8b7684c8fd",
-			"remote": true
-		}
 	]
 }

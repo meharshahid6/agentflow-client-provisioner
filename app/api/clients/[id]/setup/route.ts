@@ -3,6 +3,7 @@ import { getClientById } from "@/lib/clients/repository";
 import { getDomainByClientId, updateDomainFields, upsertDomain } from "@/lib/domains/repository";
 import { isValidHostname, normalizeHostname, validateMetaVerification } from "@/lib/domains/validation";
 import { checkPublicTxt } from "@/lib/domains/public-dns";
+import { registerDomainWithReconciliation } from "@/lib/domains/purchase";
 import { CloudflareClient } from "@/lib/integrations/cloudflare";
 import { HostingerClient } from "@/lib/integrations/hostinger";
 import { ProviderRequestError } from "@/lib/integrations/http";
@@ -56,7 +57,12 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
       if (!body?.secondConfirmation || !body.confirmationToken || body.confirmationToken !== row?.purchase_confirmation_token) return Response.json({ error: "A valid second explicit purchase confirmation is required." }, { status: 422 });
       if (!body.itemId || !body.paymentMethodId || !Number.isInteger(body.whoisId)) return Response.json({ error: "itemId, paymentMethodId, and whoisId are required." }, { status: 422 });
       if (!hostinger.isConfigured()) throw new Error("Hostinger is not configured.");
-      await hostinger.registerDomain({ domain: domain.domain, itemId: body.itemId, paymentMethodId: body.paymentMethodId, whoisId: body.whoisId! });
+      const purchase = await registerDomainWithReconciliation(hostinger, { domain: domain.domain, itemId: body.itemId, paymentMethodId: body.paymentMethodId, whoisId: body.whoisId! });
+      if (purchase.reconciled) {
+        await updateDomainFields(env.DB, domain.id, { purchase_status: "purchased", ownership_status: "purchased", purchase_confirmation_token: null, purchased_at: domain.purchasedAt ?? new Date().toISOString() });
+        await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Portfolio reconciliation confirmed ownership of ${domain.domain}; no second registration was submitted.` });
+        return Response.json({ message: "Domain ownership was found in Hostinger. No second registration was submitted.", reconciled: true });
+      }
       await updateDomainFields(env.DB, domain.id, { purchase_status: "purchased", ownership_status: "purchased", purchase_confirmation_token: null, purchased_at: new Date().toISOString() });
       await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Domain registration submitted for ${domain.domain}.` });
       return Response.json({ message: "Domain registration request submitted." });
@@ -84,14 +90,29 @@ export async function POST(request: Request, context: RouteContext<"/api/clients
     }
     if (operation === "attach_worker") {
       if (domain.cloudflareZoneStatus !== "active") return Response.json({ error: "Cloudflare zone must be active before attaching the Worker custom domain." }, { status: 409 });
-      if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured."); const attached = object(await cloudflare.attachWorkerDomain(domain.domain));
-      await updateDomainFields(env.DB, domain.id, { custom_domain_id: typeof attached.id === "string" ? attached.id : null, custom_domain_status: typeof attached.status === "string" ? attached.status : "pending" });
-      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Shared Worker custom domain submitted for ${domain.domain}.` }); return Response.json({ message: "Worker custom domain attachment submitted." });
+      if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured.");
+      const [apex, www] = await Promise.all([cloudflare.attachWorkerDomain(domain.domain), cloudflare.attachWorkerDomain(`www.${domain.domain}`)]).then((items) => items.map(object));
+      if (typeof apex.id !== "string" || typeof www.id !== "string") throw new Error("Cloudflare did not return both Worker custom-domain IDs.");
+      await updateDomainFields(env.DB, domain.id, { custom_domain_id: apex.id, custom_domain_status: typeof apex.status === "string" ? apex.status : "pending", www_custom_domain_id: www.id, www_custom_domain_status: typeof www.status === "string" ? www.status : "pending" });
+      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: "success", safeMessage: `Shared Worker custom domains submitted for ${domain.domain} and www.${domain.domain}.` }); return Response.json({ message: "Apex and www Worker custom-domain attachments submitted." });
+    }
+    if (operation === "check_worker") {
+      if (!cloudflare.isConfigured()) throw new Error("Cloudflare is not configured.");
+      if (!domain.customDomainId || !domain.wwwCustomDomainId) return Response.json({ error: "Attach both Worker custom domains first." }, { status: 409 });
+      const [apex, www] = await Promise.all([cloudflare.getWorkerDomain(domain.customDomainId), cloudflare.getWorkerDomain(domain.wwwCustomDomainId)]).then((items) => items.map(object));
+      const apexStatus = apex.status === "active" ? "active" : "pending";
+      const wwwStatus = www.status === "active" ? "active" : "pending";
+      const active = apexStatus === "active" && wwwStatus === "active";
+      await updateDomainFields(env.DB, domain.id, { custom_domain_status: apexStatus, www_custom_domain_status: wwwStatus });
+      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: active ? "success" : "pending", safeMessage: `Worker domains: apex ${apexStatus}, www ${wwwStatus}.` });
+      return Response.json({ message: active ? "Apex and www Worker custom domains are active." : "One or more Worker custom domains are still pending.", status: active ? "active" : "pending" });
     }
     if (operation === "check_https") {
-      provider = "cloudflare"; const response = await fetch(`https://${domain.domain}/`, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(10000) }); const ready = response.ok;
-      await updateDomainFields(env.DB, domain.id, { ssl_status: ready ? "ready" : "pending", https_checked_at: new Date().toISOString(), ...(ready ? { custom_domain_status: "active" } : {}) });
-      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: ready ? "success" : "pending", safeMessage: `HTTPS check returned HTTP ${response.status} for ${domain.domain}.` }); return Response.json({ message: `HTTPS returned HTTP ${response.status}.`, ready });
+      if (domain.customDomainStatus !== "active" || domain.wwwCustomDomainStatus !== "active") return Response.json({ error: "Apex and www Worker custom domains must be active before checking HTTPS." }, { status: 409 });
+      provider = "cloudflare"; const [apex, www] = await Promise.all([domain.domain, `www.${domain.domain}`].map((hostname) => fetch(`https://${hostname}/`, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(10000) })));
+      const ready = apex.ok && www.ok;
+      await updateDomainFields(env.DB, domain.id, { ssl_status: ready ? "ready" : "pending", https_checked_at: new Date().toISOString() });
+      await recordIntegrationRun(env.DB, { clientId: id, provider, operation, status: ready ? "success" : "pending", safeMessage: `HTTPS checks returned apex ${apex.status}, www ${www.status}.` }); return Response.json({ message: `HTTPS returned apex HTTP ${apex.status}, www HTTP ${www.status}.`, ready });
     }
     if (operation === "create_meta_txt") {
       const validation = validateMetaVerification(body?.value ?? ""); if (!validation.valid) return Response.json({ error: validation.error }, { status: 422 });

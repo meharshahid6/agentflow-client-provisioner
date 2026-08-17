@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { BusinessWebsiteTemplate } from "@/components/websites/business-website-template";
+import { PublicationControl } from "@/components/websites/publication-control";
 import { TemplateSelector } from "@/components/websites/template-selector";
 import { getClientById } from "@/lib/clients/repository";
 import { createWebsiteConfiguration } from "@/lib/websites/configuration";
@@ -27,5 +28,5 @@ export default async function WebsitePreviewPage({ params }: { params: Promise<{
 
   const website = await getWebsiteByClientId(env.DB, id);
   const configuration = website?.configuration ?? createWebsiteConfiguration(client);
-  return <><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3"><div><p className="text-sm font-bold text-slate-900">Website preview</p><p className="text-xs text-slate-500">Content source: {configuration.contentSource}</p></div><TemplateSelector clientId={id} selected={configuration.selectedTemplate} /></div><BusinessWebsiteTemplate configuration={configuration} /></>;
+  return <><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3"><div><p className="text-sm font-bold text-slate-900">Website preview</p><p className="text-xs text-slate-500">Content source: {configuration.contentSource}</p></div><div className="flex flex-wrap items-center gap-3"><TemplateSelector clientId={id} selected={configuration.selectedTemplate} />{website ? <PublicationControl clientId={id} status={website.status} /> : null}</div></div><BusinessWebsiteTemplate configuration={configuration} /></>;
 }

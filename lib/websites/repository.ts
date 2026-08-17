@@ -75,6 +75,13 @@ export async function setWebsiteReview(db: D1Database, clientId: string, reviewe
   return { updated: result.meta.changes > 0, reviewedAt, status };
 }
 
+export async function setWebsitePublished(db: D1Database, clientId: string, published: boolean) {
+  const status = published ? "published" : "ready_for_publication";
+  const result = await db.prepare("UPDATE websites SET status = ?, updated_at = ? WHERE client_id = ? AND status IN ('ready_for_publication', 'published')")
+    .bind(status, new Date().toISOString(), clientId).run();
+  return { updated: result.meta.changes > 0, status };
+}
+
 export async function updateWebsiteTemplate(db: D1Database, clientId: string, template: WebsiteTemplate) {
   const website = await getWebsiteByClientId(db, clientId);
   if (!website) return null;

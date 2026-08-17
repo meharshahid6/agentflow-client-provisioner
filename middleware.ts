@@ -7,17 +7,18 @@ const platformHosts = new Set([
 ]);
 
 export function middleware(request: NextRequest) {
-  const hostname = (
+  const requestHostname = (
     request.headers.get("host") ?? request.nextUrl.hostname
   )
     .split(":")[0]
     .toLowerCase();
+  const hostname = requestHostname.replace(/^www\./, "");
 
   const path = request.nextUrl.pathname;
 
   if (
-    platformHosts.has(hostname) ||
-    hostname.endsWith(".workers.dev") ||
+    platformHosts.has(requestHostname) ||
+    requestHostname.endsWith(".workers.dev") ||
     path.startsWith("/_next/") ||
     path.startsWith("/sites/") ||
     path === "/favicon.ico"
