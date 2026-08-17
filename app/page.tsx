@@ -222,7 +222,15 @@ export default function Home() {
 
       setSaveStatus("saved");
       setSavedClientId(result.client?.id ?? null);
-      setSaveMessage("Client saved to D1.");
+      if (logoFile && result.client?.id) {
+        const logoForm = new FormData();
+        logoForm.set("logo", logoFile);
+        const logoResponse = await fetch(`/api/clients/${result.client.id}/logo`, { method: "POST", body: logoForm });
+        const logoResult = await logoResponse.json().catch(() => ({})) as { storage?: string };
+        setSaveMessage(logoResponse.ok && logoResult.storage === "r2" ? "Client and logo saved." : "Client saved; logo metadata retained because R2 is unavailable.");
+      } else {
+        setSaveMessage("Client saved to D1.");
+      }
     } catch {
       setSaveStatus("error");
       setSaveMessage("Unable to reach the client storage service.");
@@ -444,12 +452,12 @@ export default function Home() {
                   <label htmlFor="logo" className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-6 py-9 text-center transition hover:border-indigo-400 hover:bg-indigo-50/40">
                     <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm"><UploadIcon /></span>
                     <span className="mt-4 text-sm font-semibold text-slate-700">{logoFile ? logoFile.name : "Upload your logo"}</span>
-                    <span className="mt-1.5 text-xs text-slate-400">PNG, JPG, or SVG · max 5 MB</span>
+                    <span className="mt-1.5 text-xs text-slate-400">PNG, JPG, WebP, or GIF · max 5 MB</span>
                     <span className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">Choose file</span>
                   </label>
-                  <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/svg+xml" onChange={handleLogoChange} className="sr-only" />
+                  <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleLogoChange} className="sr-only" />
                   <FieldError message={errors.logo} />
-                  <p className="mt-3 text-xs text-slate-400">The file is held only in local browser state. Cloud storage will be added in a future phase.</p>
+                  <p className="mt-3 text-xs text-slate-400">Logo files use R2 when configured; metadata is retained when object storage is unavailable.</p>
                 </div>
               </section>
 
