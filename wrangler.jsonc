@@ -1,22 +1,30 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
-  "name": "agentflow-client-provisioner",
-  "compatibility_date": "2026-08-15",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  },
-  // Optional uploaded-logo storage. Uncomment after creating the production R2 bucket.
-  // "r2_buckets": [{ "binding": "LOGO_ASSETS", "bucket_name": "REPLACE_WITH_PRODUCTION_BUCKET_NAME" }],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "agentflow-client-provisioner-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "preview_database_id": "agentflow-client-provisioner-local",
-      "migrations_dir": "migrations"
-    }
-  ]
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	"name": "agentflow-client-provisioner",
+	"compatibility_date": "2026-08-15",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	// Optional uploaded-logo storage. Uncomment after creating the production R2 bucket.
+	// "r2_buckets": [{ "binding": "LOGO_ASSETS", "bucket_name": "REPLACE_WITH_PRODUCTION_BUCKET_NAME" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "agentflow-client-provisioner-db",
+			"database_id": "8ce18ea3-cb47-4cb7-a5ac-5e8b7684c8fd",
+			"preview_database_id": "agentflow-client-provisioner-local",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "yes",
+			"database_name": "agentflow-client-provisioner-db",
+			"database_id": "8ce18ea3-cb47-4cb7-a5ac-5e8b7684c8fd",
+			"remote": true
+		}
+	]
 }
