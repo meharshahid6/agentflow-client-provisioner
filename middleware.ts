@@ -31,7 +31,9 @@ export function middleware(request: NextRequest) {
     path === "/" ? "" : path
   }`;
 
-  return NextResponse.rewrite(url);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-agentflow-public-site", "1");
+  return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
 }
 
 export const config = {
