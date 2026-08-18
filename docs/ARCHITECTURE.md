@@ -13,6 +13,12 @@ Primary boundaries:
 - `lib/integrations/`: Hostinger, Cloudflare, generic AI, provider status, HTTP error parsing, and safe run history.
 - `migrations/`: additive D1 schema history.
 
+## Owner control room
+
+The private owner application uses one shared navigation shell for Dashboard, New Client, Clients, Domains, and Settings. Dashboard is the operational control room; the other pages provide focused workspaces and link back to it. The shell is pathname-gated so public `/sites/[hostname]` pages and custom-domain rewrites remain standalone client websites.
+
+Domain registration availability is sourced only from Hostinger's availability endpoint. It is stored/displayed independently from Hostinger portfolio ownership and Agentflow client assignment. Explicit provider `is_available: true` means Available, `false` means Taken/Unavailable, and malformed or failed responses remain Unknown/Error and are never converted to Taken. Candidate searches check every candidate independently; local suggestions are not availability results.
+
 ## Data model
 
 `clients` is the business source of truth. `websites` has one persisted configuration per client and stores template selection independently from generated content. `domains` has one current setup record per client and tracks availability, ownership (`available_not_owned`, `existing_owned_domain`, `purchase_pending`, `purchased`), purchase, zone activation, nameservers, apex and www custom domains, HTTPS, and separate Cloudflare/public Meta TXT states.

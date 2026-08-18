@@ -40,7 +40,10 @@ export async function GET(request: Request) {
   try {
     if (mode === "search") {
       const candidates = [...new Set(suggestions(url.searchParams.get("query") ?? ""))].slice(0, 10);
-      const results = (await Promise.all(candidates.map(async (domain) => (await client.checkAvailability(domain))[0]))).filter(Boolean);
+      const results = (await Promise.all(candidates.map(async (domain) => {
+        try { return (await client.checkAvailability(domain))[0]; }
+        catch { return { domain, availability: "unknown" as const, price: null, currency: null, raw: null }; }
+      }))).filter(Boolean);
       return Response.json({ results });
     }
     const rows = portfolioRows(await client.listPortfolio());

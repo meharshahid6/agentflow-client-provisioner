@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateMetaVerification, isValidHostname, normalizeHostname } from "../lib/domains/validation";
+import { validateMetaVerification, isValidHostname, normalizeHostname, normalizeRegistrationDomain, splitRegistrationDomain } from "../lib/domains/validation";
 import { hasExpectedTxtAnswer, normalizeTxtAnswer } from "../lib/domains/public-dns";
 import { getNextSetupOperation } from "../lib/domains/setup-sequence";
 import { registerDomainWithReconciliation } from "../lib/domains/purchase";
@@ -41,12 +41,12 @@ test("Hostinger availability and purchase use documented contracts", async () =>
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const mockedFetch: typeof fetch = async (url, init) => {
     calls.push({ url: String(url), init });
-    if (String(url).endsWith("/availability")) return Response.json([{ domain: "example.com", available: true, price: "12.99", currency: "USD" }]);
+    if (String(url).endsWith("/availability")) return Response.json([{ domain: "example.com", is_available: true, price: "12.99", currency: "USD" }]);
     return Response.json({ id: "order-1" });
   };
   const client = new HostingerClient({ token: "test-token", fetch: mockedFetch });
   const availability = await client.checkAvailability("example.com");
-  assert.equal(availability[0].available, true);
+  assert.equal(availability[0].availability, "available");
   assert.equal(availability[0].price, 12.99);
   await client.registerDomain({ domain: "example.com", itemId: "item", paymentMethodId: "payment", whoisId: 1 });
   assert.equal(calls[1].url.endsWith("/api/domains/v1/portfolio"), true);
@@ -57,7 +57,7 @@ test("Hostinger handles wrapped pricing, portfolio lookup, WHOIS, and nameserver
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const mockedFetch: typeof fetch = async (url, init) => {
     calls.push({ url: String(url), init });
-    if (String(url).endsWith("/availability")) return Response.json({ data: [{ domain: "example.com", available: true, price: "9.50", currency: "USD" }] });
+    if (String(url).endsWith("/availability")) return Response.json({ data: [{ domain: "example.com", is_available: true, price: "9.50", currency: "USD" }] });
     if (String(url).endsWith("/portfolio") && init?.method === "GET") return Response.json({ items: [{ domain: "example.com", status: "active" }] });
     return Response.json({ ok: true });
   };
@@ -68,6 +68,22 @@ test("Hostinger handles wrapped pricing, portfolio lookup, WHOIS, and nameserver
   await client.updateNameservers("example.com", ["a.ns.cloudflare.com", "b.ns.cloudflare.com"]);
   assert.equal(calls.at(-1)?.init?.method, "PUT");
   assert.throws(() => client.updateNameservers("example.com", ["only-one.example"]), /At least two/);
+});
+
+test("availability parsing fails safe and normalization preserves the intended domain", async () => {
+  assert.equal(normalizeRegistrationDomain(" https://WWW.Example.COM/path/ "), "example.com");
+  assert.deepEqual(splitRegistrationDomain("Example.COM"), { domain: "example", tld: "com" });
+  const responses = [
+    [{ domain: "available.example", is_available: true }],
+    [{ domain: "taken.example", is_available: false }],
+    [{ domain: "unknown.example" }],
+  ];
+  for (const expected of ["available", "unavailable", "unknown"] as const) {
+    const client = new HostingerClient({ token: "test-token", fetch: async () => Response.json(responses.shift()) });
+    assert.equal((await client.checkAvailability(`${expected}.example`))[0].availability, expected);
+  }
+  const errorClient = new HostingerClient({ token: "test-token", fetch: async () => Response.json({ error: "upstream" }, { status: 500 }) });
+  await assert.rejects(() => errorClient.checkAvailability("error.example"), ProviderRequestError);
 });
 
 test("paid registration reconciles portfolio ownership before any write", async () => {

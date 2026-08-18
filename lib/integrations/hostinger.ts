@@ -1,8 +1,10 @@
+import { splitRegistrationDomain } from "@/lib/domains/validation";
 import { parseProviderResponse } from "./http";
 
 const BASE_URL = "https://developers.hostinger.com";
 export type HostingerConfig = { token?: string; fetch?: typeof fetch };
-export type DomainAvailability = { domain: string; available: boolean; price: number | null; currency: string | null; raw: unknown };
+export type RegistrationAvailability = "available" | "unavailable" | "unknown";
+export type DomainAvailability = { domain: string; availability: RegistrationAvailability; price: number | null; currency: string | null; raw: unknown };
 
 function rows(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
@@ -21,15 +23,15 @@ export class HostingerClient {
     return parseProviderResponse(response);
   }
   async checkAvailability(domain: string): Promise<DomainAvailability[]> {
-    const [name, ...suffix] = domain.toLowerCase().split(".");
-    if (!name || !suffix.length) throw new Error("A registrable domain is required.");
-    const payload = await this.request("/api/domains/v1/availability", { method: "POST", body: JSON.stringify({ domain: name, tlds: [suffix.join(".")], with_alternatives: false }) });
+    const split = splitRegistrationDomain(domain);
+    const payload = await this.request("/api/domains/v1/availability", { method: "POST", body: JSON.stringify({ domain: split.domain, tlds: [split.tld], with_alternatives: false }) });
     const items = rows(payload);
     if (!items.length) throw new Error("Hostinger returned an invalid availability response.");
     return items.map((item) => {
       const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
       const price = typeof row.price === "number" ? row.price : typeof row.price === "string" && Number.isFinite(Number(row.price)) ? Number(row.price) : null;
-      return { domain: typeof row.domain === "string" ? row.domain : domain, available: row.available === true, price, currency: typeof row.currency === "string" ? row.currency : null, raw: item };
+      const availability = row.is_available === true ? "available" : row.is_available === false ? "unavailable" : "unknown";
+      return { domain: typeof row.domain === "string" ? row.domain : domain.toLowerCase(), availability, price, currency: typeof row.currency === "string" ? row.currency : null, raw: item };
     });
   }
   listWhoisProfiles() { return this.request("/api/domains/v1/whois", { method: "GET" }); }

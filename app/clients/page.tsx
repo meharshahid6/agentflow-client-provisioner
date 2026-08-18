@@ -38,7 +38,7 @@ export default async function ClientsPage() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Saved clients</h1>
             <p className="mt-3 text-sm leading-6 text-slate-500">Persistent client records stored in your local or Cloudflare D1 database.</p>
           </div>
-          <Link href="/" className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700">Add new client</Link>
+          <div className="flex flex-wrap gap-2"><Link href="/dashboard" className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">Dashboard</Link><Link href="/" className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700">Add new client</Link></div>
         </div>
 
         {loadError ? (
