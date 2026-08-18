@@ -13,6 +13,7 @@ import { createDeterministicContent, selectTemplateForCategory } from "../lib/we
 import { resolvePublicPath } from "../lib/domains/public-path";
 import type { ClientRecord } from "../lib/clients/repository";
 import type { DomainRecord } from "../lib/domains/repository";
+import { buildControlCenterRows, getAttentionReason, isLiveDomain } from "../lib/dashboard/control-center";
 
 test("domain and Meta values are validated", () => {
   assert.equal(normalizeHostname("https://WWW.Example.com/path"), "example.com");
@@ -145,4 +146,15 @@ test("setup sequence pauses for ownership and zone activation", () => {
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active" }), "attach_worker");
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active", customDomainId: "worker-domain", wwwCustomDomainId: "www-worker-domain", customDomainStatus: "pending" }), "check_worker");
   assert.equal(getNextSetupOperation({ ...base, ownershipStatus: "purchased", cloudflareZoneId: "zone", nameserverStatus: "configured", cloudflareZoneStatus: "active", customDomainId: "worker-domain", wwwCustomDomainId: "www-worker-domain", customDomainStatus: "active", wwwCustomDomainStatus: "active" }), "check_https");
+});
+
+test("control center derives attention and live apex/www status", () => {
+  const base = { clientId: "client-1", ownershipStatus: "purchased", cloudflareZoneId: "zone", cloudflareZoneStatus: "active", nameserverStatus: "configured", customDomainId: "apex", customDomainStatus: "active", wwwCustomDomainId: "www", wwwCustomDomainStatus: "active", sslStatus: "ready" } as DomainRecord;
+  assert.equal(isLiveDomain(base), true);
+  assert.equal(getAttentionReason({ ...base, sslStatus: "failed" }, null), "https_failed");
+  assert.equal(getAttentionReason({ ...base, ownershipStatus: "available_not_owned" }, null), "ownership_action");
+  const client = { id: "client-1", websiteStatus: "ready", businessName: "Example", domain: "example.com" } as unknown as ClientRecord;
+  const rows = buildControlCenterRows([client], [{ ...base, id: "domain-1" }], []);
+  assert.equal(rows[0].nextOperation, "complete");
+  assert.equal(rows[0].attention, null);
 });

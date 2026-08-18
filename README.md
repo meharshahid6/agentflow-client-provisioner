@@ -14,6 +14,8 @@ Agentflow Client Provisioner is an internal Next.js 16 application for managing 
 - Track domain availability, ownership, purchase, Cloudflare, HTTPS, and Meta TXT state.
 - View aggregate state in `/dashboard`, all clients in `/clients`, domains in `/domains`, and provider configuration in `/settings`.
 
+The `/dashboard` is the owner Control Center: it shows operational KPIs, a client provisioning queue, a single next-action control driven by the setup sequence, and a Domain Center. The Domain Center can search multiple Hostinger candidates using provider-confirmed availability and sync the connected Hostinger portfolio. Existing owned domains require an explicit assignment confirmation and are then advanced through the same Cloudflare zone, nameserver, shared Worker, apex/www, and HTTPS pipeline. Search results never invent pricing; when Hostinger does not return a price, the UI says that price is available at the purchase step.
+
 ## Local development
 
 Requirements: Node.js 20.9+ and npm 10+.

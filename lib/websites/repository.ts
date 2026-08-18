@@ -47,6 +47,11 @@ export async function getWebsiteByClientId(db: D1Database, clientId: string) {
   return row ? parseRow(row) : null;
 }
 
+export async function listWebsites(db: D1Database) {
+  const result = await db.prepare("SELECT * FROM websites ORDER BY updated_at DESC").all<WebsiteRow>();
+  return result.results.map(parseRow).filter((website): website is WebsiteRecord => website !== null);
+}
+
 export async function saveWebsite(
   db: D1Database,
   clientId: string,
