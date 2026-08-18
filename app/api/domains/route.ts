@@ -1,5 +1,8 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { listDomains, upsertDomain, updateDomainFields } from "@/lib/domains/repository";
+import { getClientById } from "@/lib/clients/repository";
+import { assignExistingOwnedDomain, inspectExistingOwnedDomainAssignment } from "@/lib/domains/assignment";
+import { listDomains } from "@/lib/domains/repository";
+import { getNextSetupOperation } from "@/lib/domains/setup-sequence";
 import { HostingerClient } from "@/lib/integrations/hostinger";
 import { ProviderRequestError } from "@/lib/integrations/http";
 
@@ -56,16 +59,24 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null) as { domain?: string; clientId?: string } | null;
+  const body = await request.json().catch(() => null) as { domain?: string; clientId?: string; preview?: boolean } | null;
   if (!body?.domain || !body.clientId) return Response.json({ error: "A client and exact domain are required." }, { status: 422 });
   const { env } = getCloudflareContext();
   const client = new HostingerClient({ token: (env as unknown as Record<string, string | undefined>).HOSTINGER_API_TOKEN });
   try {
-    const portfolioDomain = await client.findPortfolioDomain(body.domain);
-    if (!portfolioDomain) return Response.json({ error: "Hostinger did not confirm ownership of this domain." }, { status: 409 });
-    const domain = await upsertDomain(env.DB, body.clientId, body.domain);
-    await updateDomainFields(env.DB, domain.id, { ownership_status: "existing_owned_domain", availability_status: "owned" });
-    return Response.json({ message: "Domain assigned. Continue setup to configure Cloudflare and the shared Worker." });
+    const selectedClient = await getClientById(env.DB, body.clientId);
+    if (!selectedClient) return Response.json({ error: "Client not found." }, { status: 404 });
+    const inspection = await inspectExistingOwnedDomainAssignment(env.DB, body.clientId, body.domain);
+    if (body.preview) return Response.json({ domain: inspection.domain, clientName: selectedClient.businessName, replaceableDomains: inspection.replaceableDomains });
+    const result = await assignExistingOwnedDomain(env.DB, body.clientId, body.domain, async (domain) => Boolean(await client.findPortfolioDomain(domain)));
+    return Response.json({
+      message: "Domain assigned successfully. Ownership confirmed through Hostinger. No DNS changes have been made yet. Next step: Create Cloudflare Zone.",
+      domain: result.domain.domain,
+      ownershipStatus: result.domain.ownershipStatus,
+      availabilityStatus: result.domain.availabilityStatus,
+      nextOperation: getNextSetupOperation(result.domain),
+      replacedDomains: result.replacedDomains,
+    });
   } catch (error) {
     return Response.json({ error: safeError(error) }, { status: 409 });
   }

@@ -61,6 +61,16 @@ export async function getDomainByHostname(db: D1Database, hostname: string) {
   return row ? toDomain(row) : null;
 }
 
+export async function getDomainByExactDomain(db: D1Database, hostname: string) {
+  const row = await db.prepare("SELECT * FROM domains WHERE domain = ? LIMIT 1").bind(hostname).first<DomainRow>();
+  return row ? toDomain(row) : null;
+}
+
+export async function listDomainsByClientId(db: D1Database, clientId: string) {
+  const result = await db.prepare("SELECT * FROM domains WHERE client_id = ? ORDER BY created_at DESC").bind(clientId).all<DomainRow>();
+  return result.results.map(toDomain);
+}
+
 export async function getDomainById(db: D1Database, id: string) {
   const row = await db.prepare("SELECT * FROM domains WHERE id = ? LIMIT 1").bind(id).first<DomainRow>();
   return row ? toDomain(row) : null;
@@ -76,7 +86,7 @@ export async function upsertDomain(db: D1Database, clientId: string, domain: str
     `INSERT INTO domains (id, client_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(domain) DO UPDATE SET updated_at = excluded.updated_at WHERE client_id = excluded.client_id`
   ).bind(id, clientId, normalized, now, now).run();
-  const saved = await getDomainByClientId(db, clientId);
+  const saved = await getDomainByExactDomain(db, normalized);
   if (!saved || saved.domain !== normalized) throw new Error("This domain is already assigned to another client.");
   return saved;
 }

@@ -97,6 +97,15 @@ export async function updateWebsiteTemplate(db: D1Database, clientId: string, te
   return result.meta.changes > 0 ? getWebsiteByClientId(db, clientId) : null;
 }
 
+export async function synchronizeWebsitePreferredDomain(db: D1Database, clientId: string, preferredDomain: string) {
+  const website = await getWebsiteByClientId(db, clientId);
+  if (!website) return null;
+  const configuration = { ...website.configuration, online: { ...website.configuration.online, preferredDomain } };
+  const result = await db.prepare("UPDATE websites SET generated_configuration = ?, updated_at = ? WHERE client_id = ?")
+    .bind(JSON.stringify(configuration), new Date().toISOString(), clientId).run();
+  return result.meta.changes > 0 ? getWebsiteByClientId(db, clientId) : null;
+}
+
 export async function countWebsitesReady(db: D1Database) {
   const row = await db.prepare("SELECT COUNT(*) AS count FROM websites WHERE status IN ('ready_for_publication', 'published')").first<{ count: number }>();
   return row?.count ?? 0;

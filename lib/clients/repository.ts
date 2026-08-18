@@ -140,6 +140,13 @@ export async function getClientById(db: D1Database, id: string) {
   return row ? toClientRecord(row) : null;
 }
 
+export async function setClientPreferredDomain(db: D1Database, id: string, domain: string) {
+  const updatedAt = new Date().toISOString();
+  const result = await db.prepare("UPDATE clients SET preferred_domain = ?, updated_at = ? WHERE id = ?")
+    .bind(domain, updatedAt, id).run();
+  return { updated: result.meta.changes > 0, updatedAt };
+}
+
 export async function updateWebsiteStatus(db: D1Database, id: string, status: WebsiteStatus) {
   const updatedAt = new Date().toISOString();
   const result = await db

@@ -14,6 +14,92 @@ import { resolvePublicPath } from "../lib/domains/public-path";
 import type { ClientRecord } from "../lib/clients/repository";
 import type { DomainRecord } from "../lib/domains/repository";
 import { buildControlCenterRows, getAttentionReason, isLiveDomain } from "../lib/dashboard/control-center";
+import { assignExistingOwnedDomain, DomainAssignmentConflict, isSafeUnusedCandidate } from "../lib/domains/assignment";
+
+function makeDomain(overrides: Partial<DomainRecord> = {}): DomainRecord {
+  return {
+    id: "domain-1", clientId: "client-1", domain: "candidate.example", registrar: "hostinger",
+    availabilityStatus: "not_checked", availabilityDetails: null, purchaseStatus: "not_started", ownershipStatus: "available_not_owned", purchasedAt: null,
+    cloudflareZoneId: null, cloudflareZoneStatus: "not_started", assignedNameservers: [], nameserverStatus: "not_started", customDomainId: null,
+    customDomainStatus: "not_started", wwwCustomDomainId: null, wwwCustomDomainStatus: "not_started", sslStatus: "not_started", metaVerificationValue: null,
+    metaDnsRecordId: null, metaVerificationStatus: "not_configured", metaPublicDnsStatus: "not_configured", createdAt: "now", updatedAt: "now", ...overrides,
+  };
+}
+
+function makeAssignmentDb(rows: DomainRecord[], clientDomain = "") {
+  const domains = rows.map((row) => ({ ...row }));
+  let preferredDomain = clientDomain;
+  const websites = new Map<string, { configuration: Record<string, unknown>; updated: number }>();
+  const domainRow = (row: DomainRecord) => ({
+    id: row.id, client_id: row.clientId, domain: row.domain, registrar: row.registrar, availability_status: row.availabilityStatus,
+    availability_details: row.availabilityDetails, purchase_status: row.purchaseStatus, ownership_status: row.ownershipStatus, purchased_at: row.purchasedAt,
+    cloudflare_zone_id: row.cloudflareZoneId, cloudflare_zone_status: row.cloudflareZoneStatus, assigned_nameservers: JSON.stringify(row.assignedNameservers),
+    nameserver_status: row.nameserverStatus, custom_domain_id: row.customDomainId, custom_domain_status: row.customDomainStatus,
+    www_custom_domain_id: row.wwwCustomDomainId, www_custom_domain_status: row.wwwCustomDomainStatus, ssl_status: row.sslStatus,
+    meta_verification_value: row.metaVerificationValue, meta_dns_record_id: row.metaDnsRecordId, meta_verification_status: row.metaVerificationStatus,
+    meta_public_dns_status: row.metaPublicDnsStatus, created_at: row.createdAt, updated_at: row.updatedAt,
+  });
+  const db = {
+    prepare(sql: string) {
+      let values: unknown[] = [];
+      return {
+        bind(...bound: unknown[]) { values = bound; return this; },
+        async first<T>() {
+          if (sql.includes("SELECT client_id FROM domains")) return domains.find((row) => row.domain === values[0]) ? { client_id: domains.find((row) => row.domain === values[0])!.clientId } as T : null;
+          if (sql.includes("FROM domains WHERE domain")) { const row = domains.find((item) => item.domain === values[0]); return row ? domainRow(row) as T : null; }
+          if (sql.includes("FROM websites")) return websites.has(values[0] as string) ? { client_id: values[0], generated_configuration: JSON.stringify(websites.get(values[0] as string)!.configuration), status: "draft", selected_template: "modern_business", content_source: "deterministic", reviewed_at: null, id: "website-1", created_at: "now", updated_at: "now" } as T : null;
+          return null;
+        },
+        async all<T>() { return { results: (sql.includes("WHERE client_id") ? domains.filter((row) => row.clientId === values[0]) : domains).map(domainRow) as T[] }; },
+        async run() {
+          if (sql.startsWith("DELETE FROM domains")) { const index = domains.findIndex((row) => row.id === values[0]); if (index >= 0) domains.splice(index, 1); }
+          if (sql.startsWith("INSERT INTO domains")) { const existing = domains.find((row) => row.domain === values[2]); if (!existing) domains.push(makeDomain({ id: values[0] as string, clientId: values[1] as string, domain: values[2] as string })); }
+          if (sql.includes("SET ownership_status = 'existing_owned_domain'")) { const row = domains.find((item) => item.domain === values[2] && item.clientId === values[3]); if (row) row.ownershipStatus = "existing_owned_domain"; if (row) row.availabilityStatus = values[0] as string; }
+          if (sql.includes("preferred_domain")) preferredDomain = values[0] as string;
+          if (sql.includes("generated_configuration")) { const website = websites.get(values.at(-1) as string); if (website) { website.configuration = JSON.parse(values[0] as string); website.updated++; } }
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+    async batch(statements: Array<{ run: () => Promise<unknown> }>) { return Promise.all(statements.map((statement) => statement.run())); },
+    get state() { return { domains, preferredDomain, websites }; },
+  } as unknown as D1Database & { state: { domains: DomainRecord[]; preferredDomain: string; websites: Map<string, { configuration: Record<string, unknown>; updated: number }> } };
+  return db;
+}
+
+test("existing owned assignment preserves valid availability, reconciles partial rows, and syncs client and website domain", async () => {
+  const db = makeAssignmentDb([makeDomain({ id: "partial", domain: "vibetechsolutions.online", availabilityStatus: "not_checked" })]);
+  const originalContent = { heroHeadline: "Keep this business copy" };
+  db.state.websites.set("client-1", { configuration: { online: { preferredDomain: "old.example", facebook: "", instagram: "" }, content: originalContent }, updated: 0 });
+  const result = await assignExistingOwnedDomain(db, "client-1", "https://WWW.vibetechsolutions.online/", async () => true);
+  assert.equal(result.domain.ownershipStatus, "existing_owned_domain");
+  assert.ok(["not_checked", "available", "unavailable", "unknown", "failed"].includes(result.domain.availabilityStatus));
+  assert.notEqual(result.domain.availabilityStatus, "owned");
+  assert.equal(db.state.preferredDomain, "vibetechsolutions.online");
+  assert.equal((db.state.websites.get("client-1")!.configuration.online as { preferredDomain: string }).preferredDomain, "vibetechsolutions.online");
+  assert.deepEqual(db.state.websites.get("client-1")!.configuration.content, originalContent);
+  assert.equal(db.state.websites.get("client-1")!.updated, 1);
+});
+
+test("existing owned assignment is idempotent and rejects cross-client claims", async () => {
+  const db = makeAssignmentDb([makeDomain({ domain: "owned.example", ownershipStatus: "existing_owned_domain" })]);
+  await assignExistingOwnedDomain(db, "client-1", "owned.example", async () => true);
+  await assignExistingOwnedDomain(db, "client-1", "owned.example", async () => true);
+  assert.equal(db.state.domains.filter((row) => row.domain === "owned.example").length, 1);
+  await assert.rejects(() => assignExistingOwnedDomain(db, "client-2", "owned.example", async () => true), DomainAssignmentConflict);
+});
+
+test("safe unused candidates replace while configured domains block replacement", async () => {
+  assert.equal(isSafeUnusedCandidate(makeDomain()), true);
+  assert.equal(isSafeUnusedCandidate(makeDomain({ cloudflareZoneId: "zone" })), false);
+  const safeDb = makeAssignmentDb([makeDomain({ domain: "candidate.example" })]);
+  const assigned = await assignExistingOwnedDomain(safeDb, "client-1", "owned.example", async () => true);
+  assert.deepEqual(assigned.replacedDomains, ["candidate.example"]);
+  assert.deepEqual(safeDb.state.domains.map((row) => row.domain), ["owned.example"]);
+  const configuredDb = makeAssignmentDb([makeDomain({ domain: "live.example", cloudflareZoneId: "zone" })]);
+  await assert.rejects(() => assignExistingOwnedDomain(configuredDb, "client-1", "owned.example", async () => true), /configured domain live\.example/);
+  assert.equal(configuredDb.state.domains[0].domain, "live.example");
+});
 
 test("domain and Meta values are validated", () => {
   assert.equal(normalizeHostname("https://WWW.Example.com/path"), "example.com");
