@@ -12,7 +12,7 @@ import { getProviderStatuses, getRuntimeProviderStatuses } from "../lib/integrat
 import { createDeterministicContent, selectTemplateForCategory } from "../lib/websites/configuration";
 import { resolvePublicPath } from "../lib/domains/public-path";
 import type { ClientRecord } from "../lib/clients/repository";
-import type { DomainRecord } from "../lib/domains/repository";
+import { buildPortfolioDomainState, getDomainByClientId, selectPrimaryDomainForClient, type DomainRecord } from "../lib/domains/repository";
 import { buildControlCenterRows, getAttentionReason, isLiveDomain } from "../lib/dashboard/control-center";
 import { assignExistingOwnedDomain, DomainAssignmentConflict, isSafeUnusedCandidate } from "../lib/domains/assignment";
 
@@ -47,6 +47,12 @@ function makeAssignmentDb(rows: DomainRecord[], clientDomain = "") {
         async first<T>() {
           if (sql.includes("SELECT client_id FROM domains")) return domains.find((row) => row.domain === values[0]) ? { client_id: domains.find((row) => row.domain === values[0])!.clientId } as T : null;
           if (sql.includes("FROM domains WHERE domain")) { const row = domains.find((item) => item.domain === values[0]); return row ? domainRow(row) as T : null; }
+          if (sql.includes("JOIN clients c")) {
+            const candidates = domains.filter((row) => row.clientId === values[0]);
+            const selected = candidates.find((row) => row.domain === preferredDomain)
+              ?? candidates.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.domain.localeCompare(right.domain))[0];
+            return selected ? domainRow(selected) as T : null;
+          }
           if (sql.includes("FROM websites")) return websites.has(values[0] as string) ? { client_id: values[0], generated_configuration: JSON.stringify(websites.get(values[0] as string)!.configuration), status: "draft", selected_template: "modern_business", content_source: "deterministic", reviewed_at: null, id: "website-1", created_at: "now", updated_at: "now" } as T : null;
           return null;
         },
@@ -93,12 +99,69 @@ test("safe unused candidates replace while configured domains block replacement"
   assert.equal(isSafeUnusedCandidate(makeDomain()), true);
   assert.equal(isSafeUnusedCandidate(makeDomain({ cloudflareZoneId: "zone" })), false);
   const safeDb = makeAssignmentDb([makeDomain({ domain: "candidate.example" })]);
-  const assigned = await assignExistingOwnedDomain(safeDb, "client-1", "owned.example", async () => true);
+  const assigned = await assignExistingOwnedDomain(safeDb, "client-1", "owned.example", async (domain) => domain === "owned.example");
   assert.deepEqual(assigned.replacedDomains, ["candidate.example"]);
   assert.deepEqual(safeDb.state.domains.map((row) => row.domain), ["owned.example"]);
   const configuredDb = makeAssignmentDb([makeDomain({ domain: "live.example", cloudflareZoneId: "zone" })]);
   await assert.rejects(() => assignExistingOwnedDomain(configuredDb, "client-1", "owned.example", async () => true), /configured domain live\.example/);
   assert.equal(configuredDb.state.domains[0].domain, "live.example");
+});
+
+test("preferred domain wins duplicate rows in repository and dashboard regardless of list order", async () => {
+  const preferred = makeDomain({ id: "preferred", domain: "primary.example", updatedAt: "2026-01-01T00:00:00.000Z", ownershipStatus: "existing_owned_domain" });
+  const newer = makeDomain({ id: "newer", domain: "candidate.example", updatedAt: "2026-02-01T00:00:00.000Z", ownershipStatus: "purchase_pending", purchaseStatus: "pending" });
+  const db = makeAssignmentDb([newer, preferred], "primary.example");
+  assert.equal((await getDomainByClientId(db, "client-1"))?.id, "preferred");
+  const client = { id: "client-1", domain: "primary.example", businessName: "Example", websiteStatus: "draft" } as unknown as ClientRecord;
+  assert.equal(selectPrimaryDomainForClient(client, [newer, preferred])?.id, "preferred");
+  assert.equal(selectPrimaryDomainForClient(client, [preferred, newer])?.id, "preferred");
+  assert.equal(buildControlCenterRows([client], [newer, preferred], [])[0].domain?.id, "preferred");
+  assert.equal(buildControlCenterRows([client], [preferred, newer], [])[0].nextOperation, "create_zone");
+});
+
+test("primary fallback is deterministic when preferred domain is empty", () => {
+  const first = makeDomain({ id: "z-id", domain: "a.example", updatedAt: "2026-01-01T00:00:00.000Z" });
+  const second = makeDomain({ id: "a-id", domain: "b.example", updatedAt: "2026-01-01T00:00:00.000Z" });
+  const client = { id: "client-1", domain: "" };
+  assert.equal(selectPrimaryDomainForClient(client, [second, first])?.domain, "a.example");
+  assert.equal(selectPrimaryDomainForClient(client, [first, second])?.domain, "a.example");
+});
+
+test("pending purchase intent can retire, while purchased, configured, and Hostinger-owned candidates block", async () => {
+  const pending = makeDomain({ domain: "pending.example", purchaseStatus: "pending", ownershipStatus: "purchase_pending" });
+  assert.equal(isSafeUnusedCandidate(pending), true);
+  const pendingDb = makeAssignmentDb([pending]);
+  await assignExistingOwnedDomain(pendingDb, "client-1", "owned.example", async (domain) => domain === "owned.example");
+  assert.deepEqual(pendingDb.state.domains.map((row) => row.domain), ["owned.example"]);
+
+  for (const blocked of [
+    makeDomain({ domain: "purchased.example", purchaseStatus: "purchased", ownershipStatus: "purchased", purchasedAt: "2026-01-01" }),
+    makeDomain({ domain: "configured.example", cloudflareZoneId: "zone-1" }),
+  ]) {
+    const db = makeAssignmentDb([blocked]);
+    await assert.rejects(() => assignExistingOwnedDomain(db, "client-1", "owned.example", async (domain) => domain === "owned.example"), /purchased or configured/);
+    assert.equal(db.state.domains.length, 1);
+  }
+
+  const hostingerOwnedDb = makeAssignmentDb([pending]);
+  await assert.rejects(() => assignExistingOwnedDomain(hostingerOwnedDb, "client-1", "owned.example", async () => true), /already owns competing domain/);
+  assert.equal(hostingerOwnedDb.state.domains[0].domain, "pending.example");
+});
+
+test("portfolio state marks only the preferred domain as actively assigned", () => {
+  const primary = makeDomain({ domain: "primary.example", ownershipStatus: "existing_owned_domain" });
+  const historical = makeDomain({ id: "history", domain: "history.example", ownershipStatus: "purchase_pending", purchaseStatus: "pending" });
+  const rows = buildPortfolioDomainState(
+    ["primary.example", "history.example", "untracked.example"],
+    [{ id: "client-1", domain: "primary.example" }],
+    [historical, primary],
+  );
+  assert.deepEqual(rows.map(({ domain, assignedClientId, isPrimary }) => ({ domain, assignedClientId, isPrimary })), [
+    { domain: "primary.example", assignedClientId: "client-1", isPrimary: true },
+    { domain: "history.example", assignedClientId: null, isPrimary: false },
+    { domain: "untracked.example", assignedClientId: null, isPrimary: false },
+  ]);
+  assert.equal(rows[0].ownershipStatus, "existing_owned_domain");
 });
 
 test("domain and Meta values are validated", () => {

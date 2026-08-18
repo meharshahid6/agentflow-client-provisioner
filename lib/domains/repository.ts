@@ -50,8 +50,53 @@ function toDomain(row: DomainRow): DomainRecord {
 }
 
 export async function getDomainByClientId(db: D1Database, clientId: string) {
-  const row = await db.prepare("SELECT * FROM domains WHERE client_id = ? ORDER BY created_at DESC LIMIT 1").bind(clientId).first<DomainRow>();
+  const row = await db.prepare(
+    `SELECT d.*
+     FROM domains d
+     JOIN clients c ON c.id = d.client_id
+     WHERE d.client_id = ?
+     ORDER BY CASE WHEN d.domain = c.preferred_domain THEN 0 ELSE 1 END,
+       d.updated_at DESC, d.domain ASC, d.id ASC
+     LIMIT 1`
+  ).bind(clientId).first<DomainRow>();
   return row ? toDomain(row) : null;
+}
+
+export function selectPrimaryDomainForClient(
+  client: { id: string; domain: string },
+  domains: DomainRecord[],
+) {
+  const candidates = domains.filter((domain) => domain.clientId === client.id);
+  const preferred = client.domain.trim().toLowerCase();
+  if (preferred) {
+    const exact = candidates.find((domain) => domain.domain?.toLowerCase() === preferred);
+    if (exact) return exact;
+  }
+  return candidates.sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+      || left.domain.localeCompare(right.domain)
+      || left.id.localeCompare(right.id)
+  )[0] ?? null;
+}
+
+export function buildPortfolioDomainState(
+  portfolioDomains: string[],
+  clients: Array<{ id: string; domain: string }>,
+  domains: DomainRecord[],
+) {
+  const clientsById = new Map(clients.map((client) => [client.id, client]));
+  const recordsByDomain = new Map(domains.map((domain) => [domain.domain, domain]));
+  return portfolioDomains.map((domain) => {
+    const record = recordsByDomain.get(domain);
+    const client = record ? clientsById.get(record.clientId) : undefined;
+    const isPrimary = Boolean(client?.domain && client.domain.toLowerCase() === domain);
+    return {
+      domain,
+      assignedClientId: isPrimary ? record!.clientId : null,
+      isPrimary,
+      ownershipStatus: record?.ownershipStatus ?? null,
+    };
+  });
 }
 
 export async function getDomainByHostname(db: D1Database, hostname: string) {

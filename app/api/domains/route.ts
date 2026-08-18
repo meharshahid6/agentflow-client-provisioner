@@ -1,7 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { getClientById } from "@/lib/clients/repository";
+import { getClientById, listClients } from "@/lib/clients/repository";
 import { assignExistingOwnedDomain, inspectExistingOwnedDomainAssignment } from "@/lib/domains/assignment";
-import { listDomains } from "@/lib/domains/repository";
+import { buildPortfolioDomainState, listDomains } from "@/lib/domains/repository";
 import { getNextSetupOperation } from "@/lib/domains/setup-sequence";
 import { HostingerClient } from "@/lib/integrations/hostinger";
 import { ProviderRequestError } from "@/lib/integrations/http";
@@ -50,9 +50,9 @@ export async function GET(request: Request) {
       return Response.json({ results });
     }
     const rows = portfolioRows(await client.listPortfolio());
-    const domains = await listDomains(env.DB);
-    const assignments = new Map(domains.map((domain) => [domain.domain, domain.clientId]));
-    return Response.json({ domains: rows.map((row) => ({ domain: portfolioName(row), assignedClientId: assignments.get(portfolioName(row) ?? "") ?? null })).filter((row) => row.domain) });
+    const [domains, clients] = await Promise.all([listDomains(env.DB), listClients(env.DB)]);
+    const portfolioDomains = rows.map(portfolioName).filter((domain): domain is string => Boolean(domain));
+    return Response.json({ domains: buildPortfolioDomainState(portfolioDomains, clients, domains) });
   } catch (error) {
     return Response.json({ error: safeError(error) }, { status: /not configured/i.test(safeError(error)) ? 503 : 502 });
   }

@@ -7,8 +7,10 @@ const validAvailabilityStatuses = new Set(["not_checked", "available", "unavaila
 export class DomainAssignmentConflict extends Error {}
 
 export function isSafeUnusedCandidate(domain: DomainRecord) {
-  return domain.purchaseStatus === "not_started"
-    && domain.ownershipStatus === "available_not_owned"
+  return ["not_started", "confirmation_required", "pending"].includes(domain.purchaseStatus)
+    && domain.purchasedAt === null
+    && domain.ownershipStatus !== "purchased"
+    && domain.ownershipStatus !== "existing_owned_domain"
     && !domain.cloudflareZoneId
     && domain.cloudflareZoneStatus === "not_started"
     && domain.nameserverStatus === "not_started"
@@ -28,7 +30,7 @@ export async function inspectExistingOwnedDomainAssignment(db: D1Database, clien
   if (claimed && claimed.clientId !== clientId) throw new DomainAssignmentConflict("This domain is already assigned to another client.");
   const competing = (await listDomainsByClientId(db, clientId)).filter((item) => item.domain !== domain);
   const blocked = competing.find((item) => !isSafeUnusedCandidate(item));
-  if (blocked) throw new DomainAssignmentConflict(`Client already has configured domain ${blocked.domain}. Disconnect or explicitly replace it before assigning ${domain}.`);
+  if (blocked) throw new DomainAssignmentConflict(`Client already has purchased or configured domain ${blocked.domain}. Disconnect or explicitly replace it before assigning ${domain}.`);
   return { domain, target: claimed, replaceableDomains: competing.map((item) => item.domain), replaceableRecords: competing };
 }
 
@@ -42,6 +44,14 @@ export async function assignExistingOwnedDomain(
   if (!isValidHostname(domain)) throw new DomainAssignmentConflict("A valid exact domain is required.");
   if (!await verifyOwnership(domain)) throw new DomainAssignmentConflict("Hostinger did not confirm ownership of this domain.");
   const inspection = await inspectExistingOwnedDomainAssignment(db, clientId, domain);
+  const ownershipChecks = await Promise.all(inspection.replaceableRecords.map(async (candidate) => ({
+    candidate,
+    owned: await verifyOwnership(candidate.domain),
+  })));
+  const ownedCandidate = ownershipChecks.find((result) => result.owned);
+  if (ownedCandidate) {
+    throw new DomainAssignmentConflict(`Hostinger already owns competing domain ${ownedCandidate.candidate.domain}. It cannot be retired automatically.`);
+  }
   const website = await getWebsiteByClientId(db, clientId);
   const now = new Date().toISOString();
   const id = inspection.target?.id ?? crypto.randomUUID();
@@ -68,5 +78,5 @@ export async function assignExistingOwnedDomain(
   await db.batch(statements);
   const saved = await getDomainByExactDomain(db, inspection.domain);
   if (!saved || saved.clientId !== clientId) throw new Error("Domain assignment did not persist.");
-  return { domain: (await getDomainByExactDomain(db, inspection.domain))!, replacedDomains: inspection.replaceableDomains };
+  return { domain: saved, replacedDomains: inspection.replaceableDomains };
 }
