@@ -54,12 +54,12 @@ The setup panel enforces this order:
 Business details -> Website generated -> Domain availability
 -> Domain ownership or explicit paid purchase
 -> Cloudflare zone -> Hostinger nameservers -> Cloudflare zone active
--> Apex and www Worker custom domains -> HTTPS ready -> Meta TXT -> Complete
+-> Apex and www Worker custom domains -> HTTPS ready -> Complete
 ```
 
 Paid registration is never part of automatic Continue Setup. It requires the exact domain confirmation, provider purchase inputs, and a second explicit approval. Immediately before registration, the app reconciles the Hostinger portfolio so a lost response cannot cause a second registration attempt. A domain already found in the Hostinger portfolio follows the owned-domain path. Automated tests mock all provider writes and never buy a domain or create production resources.
 
-Meta status distinguishes a TXT record saved in Cloudflare from the exact value being publicly resolvable. `dns_detected` means "DNS detected. Ready to verify in Meta" and never claims Meta approval.
+Meta TXT setup is optional after the public website is working. Its status distinguishes a TXT record saved in Cloudflare from the exact value being publicly resolvable. `dns_detected` means "DNS detected. Ready to verify in Meta" and never claims Meta approval.
 
 ## Provider configuration
 

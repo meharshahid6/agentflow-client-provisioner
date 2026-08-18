@@ -4,7 +4,7 @@
 
 Agentflow Client Provisioner will become a focused workspace for setting up and managing client environments through repeatable provisioning workflows.
 
-The current milestone establishes the application foundation and persistent client records in a local-first Cloudflare D1 database. It does not provision external client resources or store credentials.
+The current non-AI milestone provides the owner-only application, persistent production Cloudflare D1 state, deterministic website generation, publication controls, and the shared Worker domain pipeline. Provider credentials remain server-side runtime configuration and are never stored in D1.
 
 ## Problem
 
@@ -25,15 +25,12 @@ Client setup can become inconsistent when each environment is configured manuall
 
 ## Current scope
 
-This milestone includes the Next.js application shell, TypeScript, App Router, Tailwind CSS, ESLint, the Client Business Details Form, server-side validation, local D1 persistence, and a saved Clients page.
+This milestone includes the Next.js application shell, TypeScript, App Router, Tailwind CSS, ESLint, the Client Business Details Form, server-side validation, production D1 persistence, deterministic website generation and templates, preview/publication workflow, policy pages, domain ownership and setup state, Hostinger integration, Cloudflare zone/DNS/Worker custom-domain integration, apex/www support, and optional public Meta TXT detection.
 
-The following are intentionally out of scope for now:
+The following remain intentionally out of scope for now:
 
-- OpenAI integration
-- Hostinger integration
-- Cloudflare provider APIs beyond the configured D1 database
-- Meta integration
-- Any other API integration
-- Authentication and authorization
-- Remote production database provisioning
-- Real API keys or secrets
+- AgentRouter AI live integration
+- R2/logo asset storage
+- Billing, subscriptions, teams, and client login portals
+- Full application-managed authentication; admin protection uses Cloudflare Access configuration
+- Automatic domain purchasing without explicit human confirmation

@@ -42,14 +42,12 @@ Business details -> Website generated -> Domain availability
 -> Confirmed ownership OR two-step paid registration
 -> Cloudflare zone -> Hostinger nameserver update
 -> Explicit Cloudflare zone status check (active required)
--> Apex and www Worker custom domains -> explicit status checks
--> HTTPS check
--> Meta TXT creation and public DNS detection -> Complete
+-> HTTPS check -> Complete
 ```
 
 Continue Setup cannot cross an ownership boundary and never invokes registration. Existing Hostinger portfolio domains are marked owned. Cloudflare `getZone()` must report `active` before Worker attachment. Checks are user-triggered and bounded; there is no infinite polling.
 
-Meta TXT has two meanings: `meta_verification_status=record_created` confirms Cloudflare configuration, while `meta_public_dns_status=dns_detected` confirms an exact public DNS-over-HTTPS TXT answer. Neither state claims that Meta has approved the domain.
+Meta TXT is an optional post-setup verification aid after the public website is working. It has two meanings: `meta_verification_status=record_created` confirms Cloudflare configuration, while `meta_public_dns_status=dns_detected` confirms an exact public DNS-over-HTTPS TXT answer. Neither state claims that Meta has approved the domain.
 
 ## Integrations and observability
 
